@@ -1,4 +1,5 @@
-(ns reactor-clj.core)
+(ns reactor-clj.core
+  (:use [clojure.set]))
 
 ;; This extracts the contents of sections that start
 ;; with the specified 'key'. For example,
@@ -14,13 +15,26 @@
           (reduce concat))
      (groups false)]))
 
+(defn- extract-dependencies [defns expr]
+  (intersection (into #{} defns) (into #{} (flatten expr))))
+
+(defn- extract-defns [& groups]
+  (apply concat (for [group groups] (map first group))))
+
 (defmacro reactor [& decls]
-  (let [[input decls2]   (get-section 'input   decls)
-        [output decls3]  (get-section 'output  decls2)
-        private         decls3]
-    (println "found inputs" input)
-    (println "found outputs" output)
-    (println "found private declarations" private)))
+  (let [[input decls]    (get-section 'input   decls)
+        [output private] (get-section 'output  decls)
+         decls           (extract-defns input output private)]
+    (println decls)
+    (println "found inputs:")
+    (doseq [e input]
+      (println "  " e))
+    (println "found outputs:")
+    (doseq [e output]
+      (println "  " e))
+    (println "found private declarations:")
+    (doseq [e private]
+      (println "  " e (extract-dependencies defns e)))))
 
 (defn restrict [input min-legal max-legal]
   (max min-legal (min max-legal input)))
@@ -35,7 +49,7 @@
  (increments (snapshot increment step-size))
  (decrements (snapshot decrement (- step-size)))
  #_(changes (merge increments decrements #(+ %1 %2)))
- (changes (merge increments decrements #(+ %1 %2)))
+ (changes (merge increments decrements (fn [a b] (+ a b))))
  (proposed-volume (+ volume changes))
  (legal-changes (restrict proposed-volume min-volume max-volume))
  (output (volume (hold legal-changes min-volume))))
