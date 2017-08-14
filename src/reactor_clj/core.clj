@@ -1,31 +1,66 @@
 (ns reactor-clj.core
-  (:use [clojure.set]))
+  (:use [clojure.set]
+        [clojure.walk]))
+
+(def third (comp second rest))
+
+(defn get-return-type [type-decl]
+  (if (sequential? type-decl)
+    (last type-decl)
+    type-decl))
+
+;; This returns the type of a reactive or
+;; standard expression. It currently only supports
+;; simply-typed function declarations
+
+(defn get-type [expr type-decls]
+  #_(println "getting type for" expr)
+  (cond 
+   (contains? type-decls expr)         (get-return-type (type-decls expr))
+   (contains? type-decls (first expr)) (get-return-type (type-decls (first expr)))
+   :else      (condp = (first expr)
+                'cell   expr
+                'stream expr
+                'filter (list 'stream (get-type (third expr) type-decls)))))
+
+(defn get-base-type [reactive-type type-decls]
+  #_(println "Getting base type for" reactive-type)
+  (condp = (first reactive-type)
+    'cell (second reactive-type)
+    'stream (second reactive-type)
+    (get-base-type (get-type reactive-type type-decls) type-decls)))
+
 
 ;; This extracts the contents of sections that start
-;; with the specified 'key'. For example,
-;; for decls ((section-name item1
-;;                          (item2 item3)))
+;; with the specified 'key' and contain an even number of
+;; elements. For example, for decls
+;;           ((section-name key1 value1
+;;                          key2 value2))
 ;; calling get-section with a key of section-name
-;; will yield (item1 (item2 item3)).
-;; It also supports 
+;; will yield ((key1 value1) (key2 value2))
+
 (defn- get-section [key decls]
   (let [groups (group-by #(= key (first %)) decls)]
     [(->> (groups true)
           (map rest)
-          (reduce concat))
+          first
+          (partition 2))
      (groups false)]))
 
-(defn- extract-dependencies [defns expr]
-  (intersection (into #{} defns) (into #{} (flatten expr))))
+(defn- extract-dependencies [decls expr]
+  (intersection (into #{} decls) (into #{} (flatten expr))))
 
-(defn- extract-defns [& groups]
+(defn- extract-decls [& groups]
   (apply concat (for [group groups] (map first group))))
 
-(defmacro reactor [& decls]
-  (let [[input decls]    (get-section 'input   decls)
-        [output private] (get-section 'output  decls)
-         decls           (extract-defns input output private)]
-    (println decls)
+(defn process-reactor [form]
+  (let [name             (second form)
+        decls            (rest (rest form))
+        [input decls]    (get-section :input   decls)
+        [output private] (get-section :output  decls)
+        decls            (extract-decls input output private)]
+    (println "decls:" decls)
+    (println "meta decls:" (meta (first decls)))
     (println "found inputs:")
     (doseq [e input]
       (println "  " e))
@@ -34,22 +69,50 @@
       (println "  " e))
     (println "found private declarations:")
     (doseq [e private]
-      (println "  " e (extract-dependencies defns e)))))
+      (println "  " e (extract-dependencies decls e)))))
 
-(defn restrict [input min-legal max-legal]
-  (max min-legal (min max-legal input)))
+(defn read-from-file-with-trusted-contents [filename]
+  (with-open [r (java.io.PushbackReader.
+                 (clojure.java.io/reader filename))]
+    (binding [*read-eval* true]
+      (read r))))
 
-(reactor
- (input (min-volume  int)
-        (max-volume  int)
-        (step-size   int)
-        (increment  *unit)
-        (decrement  *unit)
-        (set-value  *int))
- (increments (snapshot increment step-size))
- (decrements (snapshot decrement (- step-size)))
- #_(changes (merge increments decrements #(+ %1 %2)))
- (changes (merge increments decrements (fn [a b] (+ a b))))
- (proposed-volume (+ volume changes))
- (legal-changes (restrict proposed-volume min-volume max-volume))
- (output (volume (hold legal-changes min-volume))))
+(defn verify-reactor-file [filename]
+  (let [old-ns-name (ns-name *ns*)]
+    (in-ns 'reactor-file-private)
+    (clojure.core/refer 'clojure.core)
+    (doseq [form (-> filename
+                     (slurp)
+                     (#(str "[" %1 "]"))
+                     (read-string))]
+      (do
+        (println "working with form" form)
+        (let [form (clojure.walk/macroexpand-all form)] 
+          (println "It expanded to" form)
+          (condp = (first form)
+            'function-properties (println "found function properties")
+            'reactor             (process-reactor form)
+            (println "unhandled (for now)")
+            #_(println "eval returned" (eval form))))))
+    (in-ns old-ns-name)))
+
+(verify-reactor-file "test/volume-1.rct")
+
+(macroexpand '(unknown (reactor
+           (input       Vmin       int
+                        Vmax       int
+                        Vstep      int
+                        increase  *unit
+                        decrease  *unit)
+           (output      V         (hold changes Vmin))
+
+           (increases (filter #(<= %1 Vmax) 
+                              (snapshot increase (+ V' Vstep))))
+           (decreases (filter #(>= %1 Vmin) 
+                              (snapshot decrease (- V' Vstep))))
+           (changes   (or-else increases decreases)))))
+
+(macroexpand (read-string "(reactor (+ 1 2 3 4 5 6 7 8 9))"))
+(meta (read-string "(reactor (+ 1 2 3 4 5 6 7 8 9))"))
+
+

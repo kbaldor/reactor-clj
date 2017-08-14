@@ -1,0 +1,19 @@
+(function-properties
+        (max (int int) int)
+        (implies (>= X Y) (= X (max X Y)))
+        (implies (>= X Y) (= X (max Y X))))
+
+(reactor volume-control
+ (:input      Vmin       (cell   int)
+              Vmax       (cell   int)
+              Vstep      (cell   int)
+              increase   (stream unit)
+              decrease   (stream unit))
+ (:output      V         (hold changes Vmin))
+ 
+ (increases (filter #(<= %1 Vmax) 
+                     (snapshot increase (+ V' Vstep))))
+ (decreases (filter #(>= %1 Vmin) 
+                     (snapshot decrease (- V' Vstep))))
+ (changes   (or-else increases decreases)))
+
