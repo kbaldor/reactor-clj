@@ -1,34 +1,33 @@
 (ns reactor-clj.core
   (:use [clojure.set]
-        [clojure.walk]))
+        [clojure.walk]
+        [reactor-clj.type-check :refer :all]))
 
-(def third (comp second rest))
-
-(defn get-return-type [type-decl]
-  (if (sequential? type-decl)
-    (last type-decl)
-    type-decl))
-
-;; This returns the type of a reactive or
-;; standard expression. It currently only supports
-;; simply-typed function declarations
-
-(defn get-type [expr type-decls]
-  #_(println "getting type for" expr)
-  (cond 
-   (contains? type-decls expr)         (get-return-type (type-decls expr))
-   (contains? type-decls (first expr)) (get-return-type (type-decls (first expr)))
-   :else      (condp = (first expr)
-                'cell   expr
-                'stream expr
-                'filter (list 'stream (get-type (third expr) type-decls)))))
-
-(defn get-base-type [reactive-type type-decls]
-  #_(println "Getting base type for" reactive-type)
-  (condp = (first reactive-type)
-    'cell (second reactive-type)
-    'stream (second reactive-type)
-    (get-base-type (get-type reactive-type type-decls) type-decls)))
+(def type-decls 
+  (let [math-types       '(compound ((int int) int)
+                                    ((int float) float)
+                                    ((float int) float)
+                                    ((float float) float))
+        comparison-types '(compound ((int int) bool)
+                                    ((int float) bool)
+                                    ((float int) bool)
+                                    ((float float) bool))
+        function         #(list 'function %1)]
+    {'+        math-types
+     '-        math-types
+     '*        math-types
+     '/        math-types
+     '<        comparison-types
+     '>        comparison-types
+     '<=       comparison-types 
+     '>=       comparison-types 
+     'filter   (function #(if (= 'stream (first %2)) %2 'error))
+     'snapshot (function #(if (not= 'stream (first %2)) 
+                            'error
+                            (if (reactive-type? %1)
+                              (list 'stream (second %1))
+                              'error)))
+     }))
 
 
 ;; This extracts the contents of sections that start
@@ -53,7 +52,17 @@
 (defn- extract-decls [& groups]
   (apply concat (for [group groups] (map first group))))
 
-(defn process-reactor [form]
+(defn process-function-properties 
+  [form [SMTLIB-commands type-decls]]
+  (reduce (fn [[SMTLIB-commands type-decls] form]
+            (if (= (first form) 'fn)
+              (let [name (second form)
+                    args (rest (rest form))]
+                [(conj SMTLIB-commands )])))))
+
+;; complete from here
+
+(defn process-reactor [form type-decls]
   (let [name             (second form)
         decls            (rest (rest form))
         [input decls]    (get-section :input   decls)
@@ -71,29 +80,24 @@
     (doseq [e private]
       (println "  " e (extract-dependencies decls e)))))
 
-(defn read-from-file-with-trusted-contents [filename]
-  (with-open [r (java.io.PushbackReader.
-                 (clojure.java.io/reader filename))]
-    (binding [*read-eval* true]
-      (read r))))
-
 (defn verify-reactor-file [filename]
   (let [old-ns-name (ns-name *ns*)]
     (in-ns 'reactor-file-private)
     (clojure.core/refer 'clojure.core)
-    (doseq [form (-> filename
-                     (slurp)
-                     (#(str "[" %1 "]"))
-                     (read-string))]
-      (do
+    (reduce 
+     (fn [type-decls]
         (println "working with form" form)
         (let [form (clojure.walk/macroexpand-all form)] 
           (println "It expanded to" form)
           (condp = (first form)
-            'function-properties (println "found function properties")
-            'reactor             (process-reactor form)
-            (println "unhandled (for now)")
-            #_(println "eval returned" (eval form))))))
+            'function-properties (process-function-properties type-decls)
+            'reactor             (process-reactor form type-decls)
+            type-decls)))
+     type-decls
+     [form (-> filename
+                     (slurp)
+                     (#(str "[" %1 "]"))
+                     (read-string))])
     (in-ns old-ns-name)))
 
 (verify-reactor-file "test/volume-1.rct")

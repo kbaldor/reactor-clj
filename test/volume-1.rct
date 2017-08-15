@@ -1,5 +1,5 @@
 (function-properties
-        (max (int int) int)
+        (fn max (int int) int)
         (implies (>= X Y) (= X (max X Y)))
         (implies (>= X Y) (= X (max Y X))))
 
