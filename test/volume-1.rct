@@ -1,7 +1,10 @@
 (function-properties
         (fn max (int int) int)
-        (implies (>= X Y) (= X (max X Y)))
-        (implies (>= X Y) (= X (max Y X))))
+        (forall [X int Y int] (implies (>= X Y) (= X (max X Y))))
+        (forall [X int Y int] (implies (>= X Y) (= X (max Y X))))
+        (fn min (int int) int)
+        (forall [X int Y int] (implies (<= X Y) (= X (min X Y))))
+        (forall [X int Y int] (implies (<= X Y) (= X (min Y X)))))
 
 (reactor volume-control
  (:input      Vmin       (cell   int)

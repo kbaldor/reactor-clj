@@ -1,7 +1,9 @@
 (ns reactor-clj.core
   (:use [clojure.set]
         [clojure.walk]
-        [reactor-clj.type-check :refer :all]))
+        [reactor-clj.type-check :refer :all]
+        [clojure.core.match :refer [match]]
+        [clojure.pprint :refer [pprint]]))
 
 (def type-decls 
   (let [math-types       '(compound ((int int) int)
@@ -52,17 +54,43 @@
 (defn- extract-decls [& groups]
   (apply concat (for [group groups] (map first group))))
 
+(defn SMTLIB-type [reactor-type]
+  (match reactor-type
+         'int 'Int))
+
+(defn update-SMTLIB-commands [commands statement]
+  (match (into [] statement)
+         ['fn name parameter-types return-type]
+         (conj commands (list 'declare-fun name
+                              (map SMTLIB-type parameter-types)
+                              (SMTLIB-type return-type)))
+         :else commands))
+
+(defn update-type-decls [type-decls statement]
+  (match (into [] statement)
+         ['fn name parameter-types return-type]
+         (assoc type-decls name (list 'simple parameter-types return-type))
+         :else type-decls))
+
+(update-SMTLIB-commands [] '(fn max (int int) int))
+(update-type-decls {} '(fn max (int int) int))
+
+(defn process-function-property [[commands type-decls] statement]
+  [(update-SMTLIB-commands commands statement)
+   (update-type-decls type-decls statement)]) 
+
+;; Takes a function-properties block and a pair
+;; containing the SMTLIB commands and the type
+;; declarations found so far and returns a new
+;; set of SMTLIB commands and type declarations.
+
 (defn process-function-properties 
-  [form [SMTLIB-commands type-decls]]
-  (reduce (fn [[SMTLIB-commands type-decls] form]
-            (if (= (first form) 'fn)
-              (let [name (second form)
-                    args (rest (rest form))]
-                [(conj SMTLIB-commands )])))))
+  [[commands type-decls] function-properties-block]
+  (reduce process-function-property 
+          [commands type-decls] 
+          (rest function-properties-block)))
 
-;; complete from here
-
-(defn process-reactor [form type-decls]
+(defn process-reactor [[commands type-decls] form]
   (let [name             (second form)
         decls            (rest (rest form))
         [input decls]    (get-section :input   decls)
@@ -78,29 +106,32 @@
       (println "  " e))
     (println "found private declarations:")
     (doseq [e private]
-      (println "  " e (extract-dependencies decls e)))))
+      (println "  " e (extract-dependencies decls e))))
+  [commands type-decls])
 
-(defn verify-reactor-file [filename]
+(defn process-form [[commands type-decls] form]
+  (println "working with form")
+  (let [form form #_(clojure.walk/macroexpand-all form)] 
+    (println "It expanded to" form)
+    (condp = (first form)
+      'function-properties (process-function-properties [commands type-decls] form)
+      'reactor             (process-reactor [commands type-decls] form)
+      [commands type-decls])))
+
+(defn verify-reactor-file [filename type-decls]
   (let [old-ns-name (ns-name *ns*)]
     (in-ns 'reactor-file-private)
     (clojure.core/refer 'clojure.core)
-    (reduce 
-     (fn [type-decls]
-        (println "working with form" form)
-        (let [form (clojure.walk/macroexpand-all form)] 
-          (println "It expanded to" form)
-          (condp = (first form)
-            'function-properties (process-function-properties type-decls)
-            'reactor             (process-reactor form type-decls)
-            type-decls)))
-     type-decls
-     [form (-> filename
-                     (slurp)
-                     (#(str "[" %1 "]"))
-                     (read-string))])
+    (let [[commands type-decls] (reduce process-form [[] type-decls]
+                                        (-> filename
+                                            (slurp)
+                                            (#(str "[" %1 "]"))
+                                            (read-string)))]
+      (pprint commands)
+      (pprint type-decls))
     (in-ns old-ns-name)))
 
-(verify-reactor-file "test/volume-1.rct")
+(verify-reactor-file "test/volume-1.rct" {})
 
 (macroexpand '(unknown (reactor
            (input       Vmin       int
