@@ -7,16 +7,34 @@
         (forall [X int Y int] (implies (<= X Y) (= X (min Y X)))))
 
 (reactor volume-control
- (:input      Vmin       (cell   int)
-              Vmax       (cell   int)
-              Vstep      (cell   int)
-              increase   (stream unit)
-              decrease   (stream unit))
- (:output      V         (hold changes Vmin))
- 
- (increases (filter #(<= %1 Vmax) 
+ (:input      Vmin      (cell int)
+              Vmax      (cell int)
+              Vstep     (cell int)
+              increase  (stream unit)
+              decrease  (stream unit))
+ (:output     V         (max Vmin (min VMax candidate)))
+ (:assumes    (<= Vmin Vmax))
+ (:guarantees (and (<= Vmin V)
+                   (<= V Vmax)))
+
+ (increases  (snapshot increase (+ V' Vstep)))
+ (decreases  (snapshot increase (- V' Vstep)))
+ (changes    (or-else increases decreases))
+ (candidate  (hold changes Vmin)))
+
+
+(reactor volume-control
+ (:input      Vmin      (cell int)
+              Vmax      (cell int)
+              Vstep     (cell int)
+              increase  (stream unit)
+              decrease  (stream unit))
+ (:output     V         (hold changes Vmin))
+
+ (increases (filter #(<= %1 Vmax)
                      (snapshot increase (+ V' Vstep))))
- (decreases (filter #(>= %1 Vmin) 
+ (decreases (filter #(>= %1 Vmin)
                      (snapshot decrease (- V' Vstep))))
  (changes   (or-else increases decreases)))
+
 
